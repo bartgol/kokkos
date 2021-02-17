@@ -3631,6 +3631,59 @@ struct SubViewDataTypeImpl<
 template <class ValueType, class Exts, class... Args>
 struct SubViewDataType : SubViewDataTypeImpl<void, ValueType, Exts, Args...> {};
 
+template <unsigned First, unsigned N, class...Args>
+struct ConsecutiveSliceIndices {
+  // static_assert(First+N<8,
+  //               "Can only check indices for supported ranks.\n");
+  using Arg = typename std::remove_cv<typename std::remove_reference<
+      typename Kokkos::Impl::get_type<First, Args...>::type>::type>::type;
+  enum : bool {
+    value = std::is_integral<Arg>::value &&
+            ConsecutiveSliceIndices<First+1,N-1,Args...>::value
+  };
+};
+
+template <unsigned First, class...Args>
+struct ConsecutiveSliceIndices<First,1,Args...> {
+  // static_assert(First<8,
+  //               "Can only check indices for supported ranks.\n");
+  using Arg = typename std::remove_cv<typename std::remove_reference<
+      typename Kokkos::Impl::get_type<First, Args...>::type>::type>::type;
+  enum : bool {
+    value = std::is_integral<Arg>::value
+  };
+};
+
+template <unsigned First, class...Args>
+struct ConsecutiveSliceIndices<First,0,Args...> {
+  enum : bool {
+    value = true
+  };
+};
+
+
+template <class... Args>
+struct NoRangeExtents {
+  template<unsigned I>
+  using Arg = typename std::remove_cv<typename std::remove_reference<
+      typename Kokkos::Impl::get_type<I, Args...>::type>::type>::type;
+
+  template<unsigned I>
+  struct ArgNotRange {
+    enum : bool {
+       value = std::is_integral<Arg<I>>::value ||
+               std::is_same<Arg<I>,Kokkos::Impl::ALL_t>::value ||
+               std::is_same<Arg<I>,void>::value
+    };
+  };
+  enum : bool {
+    value = ArgNotRange<0>::value && ArgNotRange<1>::value &&
+            ArgNotRange<2>::value && ArgNotRange<3>::value &&
+            ArgNotRange<4>::value && ArgNotRange<5>::value &&
+            ArgNotRange<6>::value && ArgNotRange<7>::value
+  };
+};
+
 //----------------------------------------------------------------------------
 
 template <class SrcTraits, class... Args>
@@ -3706,7 +3759,17 @@ class ViewMapping<
        (rank <= 2 && R0_rev &&
         std::is_same<typename SrcTraits::array_layout,
                      Kokkos::LayoutRight>::value)  // replace input rank
-       ),
+       )
+       // We're slicing away a consecutive set of dimensions,
+       // starting at second-slowest dim.
+       || (NoRangeExtents<Args...>::value &&
+         ConsecutiveSliceIndices<1,SrcTraits::rank-rank,Args...>::value &&
+         std::is_same<typename SrcTraits::array_layout,
+                      Kokkos::LayoutRight>::value)
+       || (NoRangeExtents<Args...>::value && 
+         ConsecutiveSliceIndices<(rank>0 ? rank-1 : 0),SrcTraits::rank-rank,Args...>::value &&
+         std::is_same<typename SrcTraits::array_layout,
+                      Kokkos::LayoutLeft>::value),
       typename SrcTraits::array_layout, Kokkos::LayoutStride>::type;
 
   using value_type = typename SrcTraits::value_type;

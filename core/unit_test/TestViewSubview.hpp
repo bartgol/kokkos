@@ -50,6 +50,8 @@
 #include <sstream>
 #include <iostream>
 #include <type_traits>
+#include <random>
+#include <algorithm>
 
 // TODO @refactoring move this to somewhere common
 
@@ -2102,6 +2104,233 @@ void test_layoutright_to_layoutright() {
                                                                   0);
     check.run();
   }
+}
+
+// Struct to check subviews of the form
+//   subview (v,ALL,i1,i2,...,ALL,ALL)   LayoutRight
+//   subview (..,ALL,ALL,i1,i2,...,ALL)  LayoutLeft
+template <class ViewT, class SubViewT>
+struct CheckSubviewSlicingCorrectness {
+  using layout   = typename ViewT::array_layout;
+  enum : unsigned {
+    N = ViewT::Rank,
+    M = SubViewT::Rank,
+    D = N - M
+  };
+  template<unsigned SrcN, unsigned DstN>
+  struct TagNd {};
+  using policy_t = Kokkos::RangePolicy<typename ViewT::execution_space,TagNd<N,M>>;
+  ViewT a;
+  SubViewT b;
+
+  enum : bool {
+    right = std::is_same<layout,Kokkos::LayoutRight>::value
+  };
+
+  Kokkos::View<int[D],typename ViewT::execution_space> idx;
+
+  CheckSubviewSlicingCorrectness(ViewT a_, SubViewT b_, const std::array<int,D>& slices_idx)
+      : a(a_), b(b_), idx("",D)
+  {
+    auto idx_h = Kokkos::create_mirror_view(idx);
+    for (int i=0; i<D; ++i) {idx_h[i] = slices_idx[i];}
+    Kokkos::deep_copy(idx,idx_h);
+  }
+
+  void run() {
+    int errors = 0;
+    Kokkos::parallel_reduce("CheckSubViewSlicing", policy_t(0, b.size()), *this,
+                            errors);
+    ASSERT_TRUE(errors == 0);
+  }
+
+  // In the following numbers in variables don't refer the dim idx,
+  // but rather on where they are compared to slowest dim.
+  // E.g., i0 is not the leftmost idx, but the slowest, so it's the
+  // leftmost wiht LayoutRight, and rightmost with LayoutLeft.
+  KOKKOS_INLINE_FUNCTION
+  void operator()(const TagNd<4,3>&, const int& ii, int& e) const {
+    const auto e1 = right ? b.extent(1) : b.extent(1);
+    const auto e2 = right ? b.extent(2) : b.extent(0);
+    const int i0 = ii / (e1*e2);
+    const int i1 = (ii / e2) % e1;
+    const int i2 =  ii % e2;
+
+    if (right) {
+      if (a(i0,idx[0],i1,i2) != b(i0,i1, i2)) {
+        e++;
+      }
+    } else {
+      if (a(i2,i1,idx[0],i0) != b(i2,i1, i0)) {
+        e++;
+      }
+    }
+  }
+  KOKKOS_INLINE_FUNCTION
+  void operator()(const TagNd<5,3>&, const int& ii, int& e) const {
+    const auto e1 = right ? b.extent(1) : b.extent(1);
+    const auto e2 = right ? b.extent(2) : b.extent(0);
+    const int i0 = ii / (e1*e2);
+    const int i1 = (ii / e2) % e1;
+    const int i2 =  ii % e2;
+
+    if (right) {
+      if (a(i0,idx[0],idx[1],i1,i2) != b(i0,i1, i2)) {
+        e++;
+      }
+    } else {
+      if (a(i2,i1,idx[0],idx[1],i0) != b(i2,i1, i0)) {
+        e++;
+      }
+    }
+  }
+  KOKKOS_INLINE_FUNCTION
+  void operator()(const TagNd<6,3>&, const int& ii, int& e) const {
+    const auto e1 = right ? b.extent(1) : b.extent(1);
+    const auto e2 = right ? b.extent(2) : b.extent(0);
+    const int i0 = ii / (e1*e2);
+    const int i1 = (ii / e2) % e1;
+    const int i2 =  ii % e2;
+
+    if (right) {
+      if (a(i0,idx[0],idx[1],idx[2],i1,i2) != b(i0,i1, i2)) {
+        e++;
+      }
+    } else {
+      if (a(i2,i1,idx[0],idx[1],idx[2],i0) != b(i2,i1, i0)) {
+        e++;
+      }
+    }
+  }
+
+  KOKKOS_INLINE_FUNCTION
+  void operator()(const TagNd<5,4>&, const int& ii, int& e) const {
+    const auto e1 = right ? b.extent(1) : b.extent(2);
+    const auto e2 = right ? b.extent(2) : b.extent(1);
+    const auto e3 = right ? b.extent(3) : b.extent(0);
+    const int i0 = ii / (e1*e2*e3);
+    const int i1 = (ii / (e2*e3)) % e1;
+    const int i2 = (ii / e3) % e2;
+    const int i3 =  ii % e3;
+
+    if (right) {
+      if (a(i0,idx[0],i1,i2,i3) != b(i0,i1,i2,i3)) {
+        e++;
+      }
+    } else {
+      if (a(i3,i2,i1,idx[0],i0) != b(i3,i2,i1, i0)) {
+        e++;
+      }
+    }
+  }
+  KOKKOS_INLINE_FUNCTION
+  void operator()(const TagNd<6,4>&, const int& ii, int& e) const {
+    const auto e1 = right ? b.extent(1) : b.extent(2);
+    const auto e2 = right ? b.extent(2) : b.extent(1);
+    const auto e3 = right ? b.extent(3) : b.extent(0);
+    const int i0 = ii / (e1*e2*e3);
+    const int i1 = (ii / (e2*e3)) % e1;
+    const int i2 = (ii / e3) % e2;
+    const int i3 =  ii % e3;
+
+    if (right) {
+      if (a(i0,idx[0],idx[1],i1,i2,i3) != b(i0,i1,i2,i3)) {
+        e++;
+      }
+    } else {
+      if (a(i3,i2,i1,idx[0],idx[1],i0) != b(i3,i2,i1, i0)) {
+        e++;
+      }
+    }
+  }
+  KOKKOS_INLINE_FUNCTION
+  void operator()(const TagNd<7,4>&, const int& ii, int& e) const {
+    const auto e1 = right ? b.extent(1) : b.extent(2);
+    const auto e2 = right ? b.extent(2) : b.extent(1);
+    const auto e3 = right ? b.extent(3) : b.extent(0);
+    const int i0 = ii / (e1*e2*e3);
+    const int i1 = (ii / (e2*e3)) % e1;
+    const int i2 = (ii / e3) % e2;
+    const int i3 =  ii % e3;
+
+    if (right) {
+      if (a(i0,idx[0],idx[1],idx[2],i1,i2,i3) != b(i0,i1,i2,i3)) {
+        e++;
+      }
+    } else {
+      if (a(i3,i2,i1,idx[0],idx[1],idx[2],i0) != b(i3,i2,i1, i0)) {
+        e++;
+      }
+    }
+  }
+};
+
+template<class ViewT>
+void randomize (ViewT& v) {
+  using T = typename ViewT::traits::value_type;
+  std::uniform_real_distribution<T> pdf(0.0,1.0);
+  
+  std::random_device rd;
+  std::mt19937_64 engine(rd());
+  auto gen = [&pdf,&engine]() {
+    return pdf(engine);
+  };
+  auto vh = Kokkos::create_mirror_view(v);
+  std::generate(vh.data(),vh.data()+vh.size(),gen);
+  Kokkos::deep_copy(v,vh);
+}
+
+template<typename ViewT,std::size_t N,class... Args>
+void check_slicing (ViewT& v,
+                    const std::array<int,N>& slices_idx,
+                    Args... args) {
+   auto sv = subview(v,args...);
+   using Checker = CheckSubviewSlicingCorrectness<ViewT,decltype(sv)>;
+   static_assert(N==Checker::D, "Error! Input slices_idx has the wrong dimension.\n");
+
+   // slices_idx is a list of idx used for slicing. If only 1 dim was slices
+   // away, its slice index is idx[0]. If two dims were sliced, their
+   // indices were idx[0] and idx[1].
+   // Note: too much code required to deduce the slices_idx from args...,
+   //       so I just added it as input.
+   Checker c(v,sv,slices_idx);
+   c.run();
+};
+
+template <class Space, class Layout>
+void test_subview_slicing_impl() {
+  // Create some views and randomize their values
+  using view7_t = Kokkos::View<double*******, Layout, Space>;
+  using view6_t = Kokkos::View<double******, Layout, Space>;
+  using view5_t = Kokkos::View<double*****, Layout, Space>;
+  using view4_t = Kokkos::View<double****, Layout, Space>;
+
+  view7_t a("A", 10, 10, 10, 10, 10, 10, 10);
+  view6_t b("B", 10, 10, 10, 10, 10, 10);
+  view5_t c("C", 10, 10, 10, 10, 10);
+  view4_t d("D", 10, 10, 10, 10);
+
+  randomize(a);
+  randomize(b);
+  randomize(c);
+  randomize(d);
+
+  const auto ALL = Kokkos::ALL();
+
+  // Check a bunch of subviews
+  check_slicing(a,std::array<int,3>{2,3,4},ALL,2,3,4,ALL,ALL,ALL);
+  check_slicing(b,std::array<int,3>{2,3,4},ALL,2,3,4,ALL,ALL);
+  check_slicing(b,std::array<int,2>{2,3},ALL,2,3,ALL,ALL,ALL);
+  check_slicing(c,std::array<int,2>{2,3},ALL,2,3,ALL,ALL);
+  check_slicing(c,std::array<int,1>{2},ALL,2,ALL,ALL,ALL);
+  check_slicing(d,std::array<int,1>{2},ALL,2,ALL,ALL);
+}
+
+template <class Space>
+void test_subview_slicing() {
+  // Test both Layout left and right
+  test_subview_slicing_impl<Space,Kokkos::LayoutRight>();
+  test_subview_slicing_impl<Space,Kokkos::LayoutLeft>();
 }
 //----------------------------------------------------------------------------
 
